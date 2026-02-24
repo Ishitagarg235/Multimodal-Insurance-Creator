@@ -2,6 +2,7 @@
 import streamlit as st
 import json
 import pandas as pd
+import io
 from llm import generate_text
 from image_gen import generate_image
 
@@ -55,11 +56,16 @@ def render():
                 image_prompt = generate_text(img_prompt_text).strip()
 
                 # Risk data
+                               
                 risk_prompt = f"Return only JSON: {{'risks': [['Risk', level 1-10, 'desc']]}} for {insurance_type}"
                 raw = generate_text(risk_prompt)
                 cleaned = raw.strip().replace("```json","").replace("```","").strip()
-                risk_data = json.loads(cleaned)
 
+                try:
+                    risk_data = json.loads(cleaned)
+                except json.JSONDecodeError:
+                    st.warning("Could not parse risk JSON — using empty data")
+                    risk_data = {"risks": []}
                 st.success("Text & data generated successfully (Gemini)")
             except Exception as gemini_err:
                 st.error(f"Gemini text generation failed: {str(gemini_err)}")
@@ -89,7 +95,7 @@ def render():
                 "narrative": narrative,
                 "image_prompt": image_prompt,
                 "risk_data": risk_data,
-                "image": generated_image,
+                "image": generated_image,  # still storing PIL Image here
                 "timestamp": pd.Timestamp.now().isoformat()
             })
 
@@ -113,17 +119,31 @@ def render():
                 st.info("No risk data available (Gemini failed)")
 
         with tab_prompt:
-            st.text_area("Image Prompt (used for Hugging Face)", image_prompt or "No prompt generated", height=140)
+            st.text_area("Image Prompt (used for Hugging Face)", 
+                        image_prompt or "No prompt generated", 
+                        height=140)
 
         with tab_img:
             if generated_image is not None:
-                st.image(generated_image, use_column_width=True,
+                st.image(generated_image, 
+                         use_column_width=True,
                          caption=f"{insurance_type} — {visual_style or 'Generated Concept'}")
+
+                # Show image dimensions
+                w, h = generated_image.size
+                st.caption(f"Generated image: {w}×{h} px • PNG")
+
+                # ── FIXED: Convert PIL Image → bytes for download ───────────────
+                buf = io.BytesIO()
+                generated_image.save(buf, format="PNG")
+                byte_data = buf.getvalue()
+
                 st.download_button(
-                    "Download Image",
-                    data=generated_image,
+                    label="Download Image",
+                    data=byte_data,
                     file_name=f"{insurance_type.replace(' ', '_')}_infographic.png",
-                    mime="image/png"
+                    mime="image/png",
+                    use_container_width=False
                 )
             else:
                 st.info("No image generated this time.\nCheck terminal for Hugging Face logs.")
